@@ -165,8 +165,10 @@ func write(msg *logMessage) (err error) {
 }
 
 // write a message to a pre-defined custom socket. This is a concrete, blocking event.
+// Writes out using the syslog rfc5424 format.
 func writeCustomSocket(msg *logMessage) (err error) {
-	if _, err = customSock.Write(msg.Bytes()); err != nil {
+	if _, err = customSock.Write(bytes.Join([][]byte{[]byte(fmt.Sprintf("<%d>", C.LOG_USER|msg.level)),
+		msg.Bytes()}, []byte(""))); err != nil {
 		atomic.AddUint64(&errCount, 1)
 	}
 	return
