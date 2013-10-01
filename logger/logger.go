@@ -103,6 +103,26 @@ func (l *Logger) Printf(level Level, prefix, format string, v ...interface{}) {
 	queueMsg(level, prefix, format, v...)
 }
 
+func (l *Logger) Debug(prefix, format string, v ...interface{}) {
+	l.Printf(Levels.Debug, prefix, format, v...)
+}
+
+func (l *Logger) Info(prefix, format string, v ...interface{}) {
+	l.Printf(Levels.Info, prefix, format, v...)
+}
+
+func (l *Logger) Warn(prefix, format string, v ...interface{}) {
+	l.Printf(Levels.Warn, prefix, format, v...)
+}
+
+func (l *Logger) Error(prefix, format string, v ...interface{}) {
+	l.Printf(Levels.Error, prefix, format, v...)
+}
+
+func (l *Logger) Panic(prefix, format string, v ...interface{}) {
+	l.Printf(Levels.Panic, prefix, format, v...)
+}
+
 func (l *Logger) SetLevel(level Level) {
 	l.level = level
 }
