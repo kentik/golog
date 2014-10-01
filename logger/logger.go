@@ -100,7 +100,11 @@ func (l *Logger) Printf(level Level, prefix, format string, v ...interface{}) {
 		return
 	}
 
-	queueMsg(level, prefix, format, v...)
+	if writeStdOut {
+		printStdOut(prefix, format, v...)
+	} else {
+		queueMsg(level, prefix, format, v...)
+	}
 }
 
 func (l *Logger) Debug(prefix, format string, v ...interface{}) {

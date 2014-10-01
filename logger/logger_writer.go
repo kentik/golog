@@ -67,6 +67,8 @@ var (
 	}
 
 	customSock net.Conn = nil
+
+	writeStdOut bool = false
 )
 
 // When called, this will switch over to writting log messages to the defined socket.
@@ -76,8 +78,17 @@ func SetCustomSocket(address, network string) (err error) {
 	return err
 }
 
+func SetStdOut() {
+	writeStdOut = true
+}
+
 // SetLogName sets the indentifier used by syslog for this program
 func SetLogName(p string) (err error) {
+
+	if writeStdOut {
+		return
+	}
+
 	if logName != nil {
 		C.free(unsafe.Pointer(logName))
 	}
@@ -100,6 +111,10 @@ func freeMsg(msg *logMessage) (err error) {
 	}
 
 	return
+}
+
+func printStdOut(prefix, format string, v ...interface{}) {
+	fmt.Printf(prefix+format+"\n", v...)
 }
 
 // queueMsg adds a message to the pending messages channel. It will drop the
