@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net"
 	"sync/atomic"
+	"time"
 	"unsafe"
 )
 
@@ -21,7 +22,8 @@ import (
 import "C"
 
 const (
-	NumMessages = 10 * 1024 // number of allowed log messages
+	NumMessages   = 10 * 1024 // number of allowed log messages
+	STDOUT_FORMAT = "2006-01-02T15:04 "
 )
 
 // container for a pending log message
@@ -36,7 +38,8 @@ var (
 	ErrFreeMessageUnderflow = errors.New("Too few free messages. Underflow of fixed	set.")
 
 	// the logName object for syslog to use
-	logName *C.char
+	logName       *C.char
+	logNameString string
 
 	// the message queue of pending or free messages
 	// since only one can be full at a time, the total size will be about 10MB
@@ -85,6 +88,7 @@ func SetStdOut() {
 // SetLogName sets the indentifier used by syslog for this program
 func SetLogName(p string) (err error) {
 
+	logNameString = p
 	if writeStdOut {
 		return
 	}
@@ -111,10 +115,6 @@ func freeMsg(msg *logMessage) (err error) {
 	}
 
 	return
-}
-
-func printStdOut(prefix, format string, v ...interface{}) {
-	fmt.Printf(prefix+format+"\n", v...)
 }
 
 // queueMsg adds a message to the pending messages channel. It will drop the
@@ -170,6 +170,12 @@ func queueMsg(lvl Level, prefix, format string, v ...interface{}) (err error) {
 	return
 }
 
+// Just print mesg to stdout
+func printStdOut(msg *logMessage) (err error) {
+	fmt.Printf("%s%s%s\n", time.Now().Format(STDOUT_FORMAT), logNameString, string(msg.Bytes()))
+	return
+}
+
 // write a message to syslog. This is a concrete, blocking event.
 func write(msg *logMessage) (err error) {
 	start := (*C.char)(unsafe.Pointer(&msg.Bytes()[0]))
@@ -193,7 +199,9 @@ func writeCustomSocket(msg *logMessage) (err error) {
 // within the syslog call.
 func logWriter() {
 	for msg := range messages {
-		if customSock == nil {
+		if writeStdOut {
+			printStdOut(msg)
+		} else if customSock == nil {
 			write(msg)
 		} else {
 			writeCustomSocket(msg)
