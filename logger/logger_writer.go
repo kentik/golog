@@ -23,7 +23,7 @@ import "C"
 
 const (
 	NumMessages   = 10 * 1024 // number of allowed log messages
-	STDOUT_FORMAT = "2006-01-02T15:04 "
+	STDOUT_FORMAT = "2006-01-02T15:04:05 "
 )
 
 // container for a pending log message
