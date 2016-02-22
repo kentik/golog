@@ -172,7 +172,9 @@ func queueMsg(lvl Level, prefix, format string, v ...interface{}) (err error) {
 
 // Just print mesg to stdout
 func printStdOut(msg *logMessage) (err error) {
-	fmt.Printf("%s%s%s\n", time.Now().Format(STDOUT_FORMAT), logNameString, string(msg.Bytes()))
+	// remove C null-termination byte
+	message := string(msg.Bytes()[:len(msg.Bytes())-1])
+	fmt.Printf("%s%s%s\n", time.Now().Format(STDOUT_FORMAT), logNameString, message)
 	return
 }
 
