@@ -103,24 +103,54 @@ func (l *Logger) Printf(level Level, prefix, format string, v ...interface{}) {
 	queueMsg(level, prefix, format, v...)
 }
 
+// Debug logs a printf-style debug message (deprecated, please use Debugf)
 func (l *Logger) Debug(prefix, format string, v ...interface{}) {
 	l.Printf(Levels.Debug, prefix, format, v...)
 }
 
+// Debugf logs a printf-style debug message
+func (l *Logger) Debugf(prefix, format string, v ...interface{}) {
+	l.Debug(prefix, format, v)
+}
+
+// Info logs a printf-style info message (deprecated, please use Infof)
 func (l *Logger) Info(prefix, format string, v ...interface{}) {
 	l.Printf(Levels.Info, prefix, format, v...)
 }
 
+// Infof logs a printf-style info message
+func (l *Logger) Infof(prefix, format string, v ...interface{}) {
+	l.Info(prefix, format, v)
+}
+
+// Warn logs a printf-style warn message (deprecated, please use Warnf)
 func (l *Logger) Warn(prefix, format string, v ...interface{}) {
 	l.Printf(Levels.Warn, prefix, format, v...)
 }
 
+// Warnf logs a printf-style warn message
+func (l *Logger) Warnf(prefix, format string, v ...interface{}) {
+	l.Warn(prefix, format, v)
+}
+
+// Error logs a printf-style error message (deprecated, please use Errorf)
 func (l *Logger) Error(prefix, format string, v ...interface{}) {
 	l.Printf(Levels.Error, prefix, format, v...)
 }
 
+// Errorf logs a printf-style error message
+func (l *Logger) Errorf(prefix, format string, v ...interface{}) {
+	l.Error(prefix, format, v)
+}
+
+// Panic logs a printf-style panic message (deprecated, please use Panicf)
 func (l *Logger) Panic(prefix, format string, v ...interface{}) {
 	l.Printf(Levels.Panic, prefix, format, v...)
+}
+
+// Panicf logs a printf-style panic message
+func (l *Logger) Panicf(prefix, format string, v ...interface{}) {
+	l.Panic(prefix, format, v)
 }
 
 func (l *Logger) SetLevel(level Level) {
