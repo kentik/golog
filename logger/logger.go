@@ -90,6 +90,11 @@ func New(level Level) (l *Logger) {
 }
 
 func (l *Logger) Printf(level Level, prefix, format string, v ...interface{}) {
+	if l == nil {
+		// nil logger - ignore
+		return
+	}
+
 	switch {
 	case level == Levels.Access:
 		count := atomic.AddUint64(&l.sampleCount, 1)
