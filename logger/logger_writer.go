@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"sync"
 	"sync/atomic"
 	"time"
 	"unsafe"
@@ -71,7 +72,8 @@ var (
 
 	customSock net.Conn = nil
 
-	writeStdOut bool = false
+	writeStdOut     bool = false
+	pendingRecordWG      = sync.WaitGroup{}
 )
 
 // When called, this will switch over to writting log messages to the defined socket.
@@ -158,11 +160,13 @@ func queueMsg(lvl Level, prefix, format string, v ...interface{}) (err error) {
 	}
 
 	// queue the message
+	pendingRecordWG.Add(1)
 	select {
 	case messages <- msg:
 		// no-op
 	default:
 		// this should never happen since there is an exact number of messages
+		pendingRecordWG.Done()
 		atomic.AddUint64(&errCount, 1)
 		return ErrLogFullBuf
 	}
@@ -210,10 +214,17 @@ func logWriter() {
 		}
 		msg.Reset()
 		freeMsg(msg)
+
+		pendingRecordWG.Done()
 	}
 	if customSock != nil {
 		customSock.Close()
 	}
+}
+
+// Drain() blocks until it sees no pending messages
+func Drain() {
+	pendingRecordWG.Wait()
 }
 
 func init() {
