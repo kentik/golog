@@ -4,7 +4,10 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"io"
 	"net"
+	"os"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -74,6 +77,9 @@ var (
 
 	writeStdOut     bool = false
 	pendingRecordWG      = sync.WaitGroup{}
+
+	// For capturing output to "stdout" during testing
+	output = io.Writer(os.Stdout)
 )
 
 // When called, this will switch over to writting log messages to the defined socket.
@@ -142,11 +148,11 @@ func queueMsg(lvl Level, prefix, format string, v ...interface{}) (err error) {
 
 	// render the message: level prefix, message body, C null terminator
 	msg.level = levelSysLog[lvl]
-	if msg.Write(levelMapFmt[lvl]); err != nil {
+	if _, err = msg.Write(levelMapFmt[lvl]); err != nil {
 		atomic.AddUint64(&errCount, 1)
 		return
 	}
-	if fmt.Fprintf(msg, "%s", prefix); err != nil {
+	if _, err = fmt.Fprintf(msg, "%s", prefix); err != nil {
 		atomic.AddUint64(&errCount, 1)
 		return
 	}
@@ -154,7 +160,7 @@ func queueMsg(lvl Level, prefix, format string, v ...interface{}) (err error) {
 		atomic.AddUint64(&errCount, 1)
 		return
 	}
-	if msg.WriteByte(0); err != nil {
+	if err = msg.WriteByte(0); err != nil {
 		atomic.AddUint64(&errCount, 1)
 		return
 	}
@@ -177,8 +183,9 @@ func queueMsg(lvl Level, prefix, format string, v ...interface{}) (err error) {
 // Just print mesg to stdout
 func printStdOut(msg *logMessage) (err error) {
 	// remove C null-termination byte
-	message := string(msg.Bytes()[:len(msg.Bytes())-1])
-	fmt.Printf("%s%s%s\n", time.Now().Format(STDOUT_FORMAT), logNameString, message)
+	message := string(msg.Bytes()[:msg.Len()-1])
+	message = strings.TrimRight(message, "\n")
+	fmt.Fprintf(output, "%s%s%s\n", time.Now().Format(STDOUT_FORMAT), logNameString, message)
 	return
 }
 

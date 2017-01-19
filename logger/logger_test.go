@@ -1,6 +1,10 @@
 package logger
 
 import (
+	"bytes"
+	"io"
+	"os"
+	"regexp"
 	"testing"
 )
 
@@ -15,4 +19,25 @@ func TestNilLogger(t *testing.T) {
 	log.Warnf("prefix", "Hello %s", "there")
 	log.Errorf("prefix", "Hello %s", "there")
 	log.Panicf("prefix", "Hello %s", "there")
+}
+
+func TestRemoveNewline(t *testing.T) {
+	buf := bytes.Buffer{}
+	output = &buf
+	defer func() {
+		output = io.Writer(os.Stdout)
+	}()
+
+	log := New(Levels.Debug)
+	SetStdOut()
+
+	log.Debugf("", "testing")
+	log.Debugf("", "testing\n")
+	log.Debugf("", "testing\n\n\n\n")
+
+	Drain()
+
+	if !regexp.MustCompile("^[^\n]*testing\n[^\n]*testing\n[^\n]*testing\n$").Match(buf.Bytes()) {
+		t.Error("Expected testing\\n * 3")
+	}
 }
