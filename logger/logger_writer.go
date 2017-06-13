@@ -27,13 +27,14 @@ import "C"
 
 const (
 	NumMessages   = 10 * 1024 // number of allowed log messages
-	STDOUT_FORMAT = "2006-01-02T15:04:05 "
+	STDOUT_FORMAT = "2006-01-02T15:04:05.000 "
 )
 
 // container for a pending log message
 type logMessage struct {
 	bytes.Buffer
 	level C.int
+	time  time.Time
 }
 
 var (
@@ -115,6 +116,7 @@ func SetLogName(p string) (err error) {
 
 // freeMsg releases the message back to be reused
 func freeMsg(msg *logMessage) (err error) {
+	msg.Reset()
 	select {
 	case freeMessages <- msg: // no-op
 	default:
@@ -134,34 +136,35 @@ func queueMsg(lvl Level, prefix, format string, v ...interface{}) (err error) {
 
 	// get a message if possible
 	select {
-	case msg = <-freeMessages:
-		defer func() {
-			if err != nil {
-				freeMsg(msg)
-			}
-		}()
+	case msg = <-freeMessages: // got a message-struct; proceed
 	default:
 		// no messages left, drop
 		atomic.AddUint64(&dropCount, 1)
 		return
 	}
 
+	msg.time = time.Now()
+
 	// render the message: level prefix, message body, C null terminator
 	msg.level = levelSysLog[lvl]
 	if _, err = msg.Write(levelMapFmt[lvl]); err != nil {
 		atomic.AddUint64(&errCount, 1)
+		freeMsg(msg)
 		return
 	}
 	if _, err = fmt.Fprintf(msg, "%s", prefix); err != nil {
 		atomic.AddUint64(&errCount, 1)
+		freeMsg(msg)
 		return
 	}
 	if _, err = fmt.Fprintf(msg, format, v...); err != nil {
 		atomic.AddUint64(&errCount, 1)
+		freeMsg(msg)
 		return
 	}
 	if err = msg.WriteByte(0); err != nil {
 		atomic.AddUint64(&errCount, 1)
+		freeMsg(msg)
 		return
 	}
 
@@ -185,7 +188,7 @@ func printStdOut(msg *logMessage) (err error) {
 	// remove C null-termination byte
 	message := string(msg.Bytes()[:msg.Len()-1])
 	message = strings.TrimRight(message, "\n")
-	fmt.Fprintf(output, "%s%s%s\n", time.Now().Format(STDOUT_FORMAT), logNameString, message)
+	fmt.Fprintf(output, "%s%s%s\n", msg.time.Format(STDOUT_FORMAT), logNameString, message)
 	return
 }
 
@@ -219,7 +222,6 @@ func logWriter() {
 		} else {
 			writeCustomSocket(msg)
 		}
-		msg.Reset()
 		freeMsg(msg)
 
 		pendingRecordWG.Done()
