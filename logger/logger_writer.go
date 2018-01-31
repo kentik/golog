@@ -76,11 +76,9 @@ var (
 
 	customSock net.Conn = nil
 
-	writeStdOut     bool = false
-	pendingRecordWG      = sync.WaitGroup{}
+	pendingRecordWG = sync.WaitGroup{}
 
-	// For capturing output to "stdout" during testing
-	output = io.Writer(os.Stdout)
+	stdhdl io.Writer
 )
 
 // When called, this will switch over to writting log messages to the defined socket.
@@ -91,14 +89,18 @@ func SetCustomSocket(address, network string) (err error) {
 }
 
 func SetStdOut() {
-	writeStdOut = true
+	stdhdl = io.Writer(os.Stdout)
+}
+
+func SetStdErr() {
+	stdhdl = io.Writer(os.Stderr)
 }
 
 // SetLogName sets the indentifier used by syslog for this program
 func SetLogName(p string) (err error) {
 
 	logNameString = p
-	if writeStdOut {
+	if stdhdl != nil {
 		return
 	}
 
@@ -184,11 +186,11 @@ func queueMsg(lvl Level, prefix, format string, v ...interface{}) (err error) {
 }
 
 // Just print mesg to stdout
-func printStdOut(msg *logMessage) (err error) {
+func printStd(msg *logMessage) (err error) {
 	// remove C null-termination byte
 	message := string(msg.Bytes()[:msg.Len()-1])
 	message = strings.TrimRight(message, "\n")
-	fmt.Fprintf(output, "%s%s%s\n", msg.time.Format(STDOUT_FORMAT), logNameString, message)
+	fmt.Fprintf(stdhdl, "%s%s%s\n", msg.time.Format(STDOUT_FORMAT), logNameString, message)
 	return
 }
 
@@ -215,8 +217,8 @@ func writeCustomSocket(msg *logMessage) (err error) {
 // within the syslog call.
 func logWriter() {
 	for msg := range messages {
-		if writeStdOut {
-			printStdOut(msg)
+		if stdhdl != nil {
+			printStd(msg)
 		} else if customSock == nil {
 			write(msg)
 		} else {
