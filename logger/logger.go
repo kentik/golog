@@ -6,6 +6,7 @@
 package logger
 
 import (
+	"bytes"
 	"sync/atomic"
 )
 
@@ -168,4 +169,15 @@ func (l *Logger) Level() Level {
 
 func (l *Logger) SetAccessLogSample(sample uint64) {
 	atomic.StoreUint64(&l.sample, sample)
+}
+
+func (l *Logger) Write(p []byte) (int, error) {
+	if bytes.Contains(p, []byte("Error")) {
+		l.Errorf("", "%s", string(p))
+	} else if bytes.Contains(p, []byte("Warn")) {
+		l.Warnf("", "%s", string(p))
+	} else {
+		l.Infof("", "%s", string(p))
+	}
+	return len(p), nil
 }
