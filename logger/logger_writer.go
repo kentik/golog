@@ -227,40 +227,37 @@ func logWriter() {
 	if customSock != nil {
 		customSock.Close()
 	}
-	logWriterFinished <- struct{}{}
+	close(logWriterFinished)
 }
 
 // Close shuts down the logger system. After Close is called, any additional
 // logs will panic. Only call this if you are completely done.
-func Close(ctx context.Context) {
+func Close(ctx context.Context) error {
 	close(messages)
 	select {
 	case <-logWriterFinished:
+		return nil
 	case <-ctx.Done():
+		return ctx.Err()
 	}
 }
 
 // DrainContext blocks until it sees no pending messages or the context is canceled.
 // Pending messages may never run out if another goroutine is constantly
 // writing.
-func DrainContext(ctx context.Context) {
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		default:
-		}
-		time.Sleep(10 * time.Millisecond)
-		if len(messages) <= 0 {
-			return
-		}
+func DrainContext(ctx context.Context) error {
+	for ctx.Err() == nil && len(messages) > 0 {
+		innerCtx, cancel := context.WithTimeout(ctx, 10*time.Millisecond)
+		<-innerCtx.Done() // Wait for 10ms and check len(messages) again
+		cancel()
 	}
+	return ctx.Err()
 }
 
 // Drain is like DrainContext, but you didn't want to write context.Background().
 // Outside of tests, you want to use DrainContext.
 func Drain() {
-	DrainContext(context.Background())
+	_ = DrainContext(context.Background())
 }
 
 func setup() {
