@@ -2,8 +2,8 @@ package logger
 
 import (
 	"bytes"
+	"context"
 	"io"
-	"os"
 	"regexp"
 	"testing"
 )
@@ -22,14 +22,11 @@ func TestNilLogger(t *testing.T) {
 }
 
 func TestRemoveNewline(t *testing.T) {
+	defer func(origstdhdl io.Writer) { stdhdl = origstdhdl }(stdhdl)
 	buf := bytes.Buffer{}
-	output = &buf
-	defer func() {
-		output = io.Writer(os.Stdout)
-	}()
+	stdhdl = &buf
 
 	log := New(Levels.Debug)
-	SetStdOut()
 
 	log.Debugf("", "testing")
 	log.Debugf("", "testing\n")
@@ -39,5 +36,32 @@ func TestRemoveNewline(t *testing.T) {
 
 	if !regexp.MustCompile("^[^\n]*testing\n[^\n]*testing\n[^\n]*testing\n$").Match(buf.Bytes()) {
 		t.Error("Expected testing\\n * 3")
+	}
+}
+
+func TestClose(t *testing.T) {
+	defer func() { setup() }() // Set everything up again since we call Close()
+	buf := bytes.Buffer{}
+	stdhdl = &buf
+
+	log := New(Levels.Debug)
+	log.Debugf("", "testing123")
+	Close(context.Background())
+	if !regexp.MustCompile("^[^\n]*testing123\n$").Match(buf.Bytes()) {
+		t.Fatalf("Expected testing123\\n to be written but got '%s'", buf.String())
+	}
+
+	didRecover := false
+	logAndRecover := func() {
+		defer func() {
+			if r := recover(); r != nil {
+				didRecover = true
+			}
+		}()
+		log.Debugf("", "asdf")
+	}
+	logAndRecover()
+	if !didRecover {
+		t.Fatalf("Expected log to panic, but it didn't.")
 	}
 }

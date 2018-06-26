@@ -2,13 +2,13 @@ package logger
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"io"
 	"net"
 	"os"
 	"strings"
-	"sync"
 	"sync/atomic"
 	"time"
 	"unsafe"
@@ -48,8 +48,8 @@ var (
 
 	// the message queue of pending or free messages
 	// since only one can be full at a time, the total size will be about 10MB
-	messages     chan *logMessage = make(chan *logMessage, NumMessages)
-	freeMessages chan *logMessage = make(chan *logMessage, NumMessages)
+	messages     chan *logMessage
+	freeMessages chan *logMessage
 
 	// mapping of our levels to syslog values
 	levelSysLog = map[Level]C.int{
@@ -76,7 +76,7 @@ var (
 
 	customSock net.Conn = nil
 
-	pendingRecordWG = sync.WaitGroup{}
+	logWriterFinished chan struct{}
 
 	stdhdl io.Writer
 )
@@ -171,13 +171,11 @@ func queueMsg(lvl Level, prefix, format string, v ...interface{}) (err error) {
 	}
 
 	// queue the message
-	pendingRecordWG.Add(1)
 	select {
 	case messages <- msg:
 		// no-op
 	default:
 		// this should never happen since there is an exact number of messages
-		pendingRecordWG.Done()
 		atomic.AddUint64(&errCount, 1)
 		return ErrLogFullBuf
 	}
@@ -225,20 +223,50 @@ func logWriter() {
 			writeCustomSocket(msg)
 		}
 		freeMsg(msg)
-
-		pendingRecordWG.Done()
 	}
 	if customSock != nil {
 		customSock.Close()
 	}
+	logWriterFinished <- struct{}{}
 }
 
-// Drain() blocks until it sees no pending messages
+// Close shuts down the logger system. After Close is called, any additional
+// logs will panic. Only call this if you are completely done.
+func Close(ctx context.Context) {
+	close(messages)
+	select {
+	case <-logWriterFinished:
+	case <-ctx.Done():
+	}
+}
+
+// DrainContext blocks until it sees no pending messages or the context is canceled.
+// Pending messages may never run out if another goroutine is constantly
+// writing.
+func DrainContext(ctx context.Context) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		default:
+		}
+		time.Sleep(10 * time.Millisecond)
+		if len(messages) <= 0 {
+			return
+		}
+	}
+}
+
+// Drain is like DrainContext, but you didn't want to write context.Background().
+// Outside of tests, you want to use DrainContext.
 func Drain() {
-	pendingRecordWG.Wait()
+	DrainContext(context.Background())
 }
 
-func init() {
+func setup() {
+	stdhdl = nil
+	messages = make(chan *logMessage, NumMessages)
+	freeMessages = make(chan *logMessage, NumMessages)
 	msgArr := make([]logMessage, NumMessages)
 	for i := range msgArr {
 		if err := freeMsg(&msgArr[i]); err != nil {
@@ -246,5 +274,10 @@ func init() {
 		}
 	}
 
+	logWriterFinished = make(chan struct{}, 1)
 	go logWriter()
+}
+
+func init() {
+	setup()
 }
