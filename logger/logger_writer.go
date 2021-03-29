@@ -11,7 +11,6 @@ import (
 	"strings"
 	"sync/atomic"
 	"time"
-	"unsafe"
 )
 
 const (
@@ -115,7 +114,6 @@ func queueMsg(lvl Level, prefix, format string, v ...interface{}) (err error) {
 	msg.time = time.Now()
 
 	// render the message: level prefix, message body, C null terminator
-	msg.level = levelSysLog[lvl]
 	if _, err = msg.Write(levelMapFmt[lvl]); err != nil {
 		atomic.AddUint64(&errCount, 1)
 		freeMsg(msg)
