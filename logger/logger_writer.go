@@ -14,17 +14,6 @@ import (
 	"unsafe"
 )
 
-// The csyslog function is necessary here because cgo does not appear
-// to be able to call a variadic function directly and syslog has the
-// same signature as printf.
-
-// #include <stdlib.h>
-// #include <syslog.h>
-// void csyslog(int p, const char *m) {
-//     syslog(p, "%s", m);
-// }
-import "C"
-
 const (
 	NumMessages   = 10 * 1024 // number of allowed log messages
 	STDOUT_FORMAT = "2006-01-02T15:04:05.000 "
@@ -33,8 +22,7 @@ const (
 // container for a pending log message
 type logMessage struct {
 	bytes.Buffer
-	level C.int
-	time  time.Time
+	time time.Time
 }
 
 var (
@@ -43,24 +31,12 @@ var (
 	ErrFreeMessageUnderflow = errors.New("Too few free messages. Underflow of fixed	set.")
 
 	// the logName object for syslog to use
-	logName       *C.char
 	logNameString string
 
 	// the message queue of pending or free messages
 	// since only one can be full at a time, the total size will be about 10MB
 	messages     chan *logMessage
 	freeMessages chan *logMessage
-
-	// mapping of our levels to syslog values
-	levelSysLog = map[Level]C.int{
-		Levels.Access: C.LOG_INFO,
-		Levels.Off:    C.LOG_DEBUG,
-		Levels.Panic:  C.LOG_ERR,
-		Levels.Error:  C.LOG_ERR,
-		Levels.Warn:   C.LOG_WARNING,
-		Levels.Info:   C.LOG_INFO,
-		Levels.Debug:  C.LOG_DEBUG,
-	}
 
 	// mirror of levelMap used to avoid making a new string with '[]' on every log
 	// call
@@ -104,16 +80,7 @@ func SetLogName(p string) (err error) {
 		return
 	}
 
-	if logName != nil {
-		C.free(unsafe.Pointer(logName))
-	}
-	logName = C.CString(p)
-	_, err = C.openlog(logName, C.LOG_NDELAY|C.LOG_NOWAIT|C.LOG_PID, C.LOG_USER)
-	if err != nil {
-		atomic.AddUint64(&errCount, 1)
-	}
-
-	return err
+	return nil
 }
 
 // freeMsg releases the message back to be reused
@@ -192,35 +159,12 @@ func printStd(msg *logMessage) (err error) {
 	return
 }
 
-// write a message to syslog. This is a concrete, blocking event.
-func write(msg *logMessage) (err error) {
-	start := (*C.char)(unsafe.Pointer(&msg.Bytes()[0]))
-	if _, err = C.csyslog(C.LOG_USER|msg.level, start); err != nil {
-		atomic.AddUint64(&errCount, 1)
-	}
-	return
-}
-
-// write a message to a pre-defined custom socket. This is a concrete, blocking event.
-// Writes out using the syslog rfc5424 format.
-func writeCustomSocket(msg *logMessage) (err error) {
-	if _, err = customSock.Write(bytes.Join([][]byte{[]byte(fmt.Sprintf("<%d>", C.LOG_USER|msg.level)),
-		msg.Bytes()}, []byte(""))); err != nil {
-		atomic.AddUint64(&errCount, 1)
-	}
-	return
-}
-
 // logWriter will write out messages to syslog. It may block if something breaks
 // within the syslog call.
 func logWriter() {
 	for msg := range messages {
 		if stdhdl != nil {
 			printStd(msg)
-		} else if customSock == nil {
-			write(msg)
-		} else {
-			writeCustomSocket(msg)
 		}
 		freeMsg(msg)
 	}
