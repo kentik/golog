@@ -79,6 +79,8 @@ var (
 	logWriterFinished chan struct{}
 
 	stdhdl io.Writer
+
+	logTee chan string
 )
 
 // When called, this will switch over to writting log messages to the defined socket.
@@ -94,6 +96,10 @@ func SetStdOut() {
 
 func SetStdErr() {
 	stdhdl = io.Writer(os.Stderr)
+}
+
+func SetTee(tee chan string) {
+	logTee = tee
 }
 
 // SetLogName sets the indentifier used by syslog for this program
@@ -183,6 +189,19 @@ func queueMsg(lvl Level, prefix, format string, v ...interface{}) (err error) {
 	return
 }
 
+// Send to a tee
+func printTee(msg *logMessage) (err error) {
+	// remove C null-termination byte
+	message := string(msg.Bytes()[:msg.Len()-1])
+	message = strings.TrimRight(message, "\n")
+	select {
+	case logTee <- fmt.Sprintf("%s%s%s", msg.time.Format(STDOUT_FORMAT), logNameString, message):
+	default:
+		err = fmt.Errorf("Log Tee Full")
+	}
+	return
+}
+
 // Just print mesg to stdout
 func printStd(msg *logMessage) (err error) {
 	// remove C null-termination byte
@@ -215,6 +234,10 @@ func writeCustomSocket(msg *logMessage) (err error) {
 // within the syslog call.
 func logWriter() {
 	for msg := range messages {
+		if logTee != nil {
+			printTee(msg)
+		}
+
 		if stdhdl != nil {
 			printStd(msg)
 		} else if customSock == nil {
