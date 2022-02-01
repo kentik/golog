@@ -8,6 +8,7 @@ import (
 	"io"
 	"net"
 	"os"
+	"runtime"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -155,6 +156,20 @@ func queueMsg(lvl Level, prefix, format string, v ...interface{}) (err error) {
 
 	// render the message: level prefix, message body, C null terminator
 	msg.level = levelSysLog[lvl]
+	_, file, line, _ := runtime.Caller(4)
+	for _, s := range []string{
+		// Most to least specific
+		"vendor/github.com/kentik/",
+		"vendor/github.com/",
+		"vendor/",
+		"build/input/",
+	} {
+		idx := strings.Index(file, s)
+		if idx >= 0 {
+			file = file[idx+len(s):]
+			break
+		}
+	}
 	if _, err = msg.Write(levelMapFmt[lvl]); err != nil {
 		atomic.AddUint64(&errCount, 1)
 		freeMsg(msg)
@@ -165,6 +180,7 @@ func queueMsg(lvl Level, prefix, format string, v ...interface{}) (err error) {
 		freeMsg(msg)
 		return
 	}
+	fmt.Fprintf(msg, "<%s: %d> ", file, line)
 	if _, err = fmt.Fprintf(msg, format, v...); err != nil {
 		atomic.AddUint64(&errCount, 1)
 		freeMsg(msg)
