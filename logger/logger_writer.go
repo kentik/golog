@@ -162,11 +162,11 @@ func queueMsg(lvl Level, prefix, format string, v ...interface{}) (err error) {
 		"vendor/github.com/kentik/",
 		"vendor/github.com/",
 		"vendor/",
-		"build/input",
+		"build/input/",
 	} {
 		idx := strings.Index(file, s)
 		if idx >= 0 {
-			file = file[idx+len(s)+1:]
+			file = file[idx+len(s):]
 			break
 		}
 	}
