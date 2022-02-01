@@ -157,9 +157,18 @@ func queueMsg(lvl Level, prefix, format string, v ...interface{}) (err error) {
 	// render the message: level prefix, message body, C null terminator
 	msg.level = levelSysLog[lvl]
 	_, file, line, _ := runtime.Caller(4)
-	idx := strings.Index(file, "build/input")
-	if idx >= 0 {
-		file = file[idx+12:]
+	for _, s := range []string{
+		// Most to least specific
+		"vendor/github.com/kentik/",
+		"vendor/github.com/",
+		"vendor/",
+		"build/input",
+	} {
+		idx := strings.Index(file, s)
+		if idx >= 0 {
+			file = file[idx+len(s)+1:]
+			break
+		}
 	}
 	if _, err = msg.Write(levelMapFmt[lvl]); err != nil {
 		atomic.AddUint64(&errCount, 1)
