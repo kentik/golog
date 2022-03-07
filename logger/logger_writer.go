@@ -125,7 +125,6 @@ func SetLogName(p string) (err error) {
 
 // freeMsg releases the message back to be reused
 func freeMsg(msg *logMessage) (err error) {
-	//msg.Buffer = bytes.Buffer{}
 	msg.Reset()
 	select {
 	case freeMessages <- msg: // no-op
