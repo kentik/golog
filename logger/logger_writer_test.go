@@ -37,14 +37,14 @@ func TestReleaseMemory(t *testing.T) {
 
 	heapAfterShortLogs := cycle("hello")
 
-	// only using 10K log messages for this.  Worst-case, we end up with
-	// 10,000 of them, and use up 100MB of real heap.  That should be
+	// Use 50KB log messages for this.  Worst-case, we end up with
+	// 10,000 of them, and use up 500MB of real heap.  That should be
 	// plenty for us to detect, without clobbering anybody's dev box.
-	heapAfterLongLogs := cycle(randString(1024))
+	heapAfterLongLogs := cycle(randString(51200))
 
 	// accept a 10% fluctuation in the total heap size
-	if float64(heapAfterLongLogs) > 1.1*float64(heapAfterShortLogs) {
-		t.Fatalf("heapAfterLongLogs %d much greater than heapAfterShortLogs %d", heapAfterLongLogs, heapAfterShortLogs)
+	if float64(heapAfterLongLogs) > 1024*1024*100 {
+		t.Fatalf("heapAfterLongLogs %d greater than 100MB!", heapAfterLongLogs)
 	} else {
 		fmt.Printf("heapAfterShortLogs: %d\nheapAfterLongLogs:  %d\nSeems acceptable!\n", heapAfterShortLogs, heapAfterLongLogs)
 	}
