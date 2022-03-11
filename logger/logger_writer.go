@@ -123,9 +123,15 @@ func SetLogName(p string) (err error) {
 	return err
 }
 
+const reclaimThreshold int = 5120 // Seems to be around p99 on our runner-master log messages
+
 // freeMsg releases the message back to be reused
 func freeMsg(msg *logMessage) (err error) {
-	msg.Reset()
+	if msg.Buffer.Cap() > reclaimThreshold {
+		msg.Buffer = *bytes.NewBuffer(make([]byte, 0, reclaimThreshold))
+	} else {
+		msg.Reset()
+	}
 	select {
 	case freeMessages <- msg: // no-op
 	default:
