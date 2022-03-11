@@ -11,6 +11,12 @@ import (
 
 func TestReleaseMemory(t *testing.T) {
 
+	// This isn't a functional test, and I don't want it to be a gate on
+	// future changes.  But I'd like to leave it in place, because I
+	// suspect that we may need to confirm similar behaviors in the future,
+	// and I think it may be a useful starting point.
+	t.SkipNow()
+
 	// we're going to log a few cycles of short messages, then a few cycles of long messages, then short messages again.
 	// Hopefully, we can observe a growing, then shrinking, heap.
 	log := New(Levels.Debug)
