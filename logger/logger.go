@@ -13,7 +13,7 @@ import (
 type Level int
 
 var (
-	// offLogger is a dummy no-op logger.
+	// OffLogger is a dummy no-op logger.
 	OffLogger = New(Levels.Off)
 
 	// Levels is a singleton that represents possible log levels.
@@ -26,13 +26,13 @@ var (
 		Debug  Level
 		Access Level
 	}{
-		Access: (-1),
-		Off:    (0),
-		Panic:  (1),
-		Error:  (2),
-		Warn:   (3),
-		Info:   (4),
-		Debug:  (5),
+		Access: -1,
+		Off:    0,
+		Panic:  1,
+		Error:  2,
+		Warn:   3,
+		Info:   4,
+		Debug:  5,
 	}
 
 	// levelMap maps Level objects to the pretty printed name
@@ -58,7 +58,7 @@ var (
 		"debug":  Levels.Debug,
 	}
 
-	logCount  uint64 // number of messages attemped on all loggers
+	logCount  uint64 // number of messages attempted on all loggers
 	dropCount uint64 // number of messages dropped on all loggers
 	errCount  uint64 // number of errors seen across all loggers
 )

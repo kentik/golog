@@ -20,10 +20,23 @@ import (
 // same signature as printf.
 
 // #include <stdlib.h>
+// #ifdef _WIN32               /* for Windows builds, syslog functions do NOTHING */
+// void csyslog(int p, const char *m) {}
+// void openlog(const char *m, int i, int l) {}
+// #define	LOG_ERR		3      /* error conditions */
+// #define	LOG_WARNING	4      /* warning conditions */
+// #define	LOG_INFO	6      /* informational */
+// #define	LOG_DEBUG	7      /* debug-level messages */
+// #define	LOG_PID		0x01   /* log the pid with each message */
+// #define	LOG_NDELAY	0x08   /* don't delay open */
+// #define	LOG_NOWAIT	0x10   /* don't wait for console forks: DEPRECATED */
+// #define	LOG_USER	(1<<3) /* random user-level messages */
+// #else
 // #include <syslog.h>
 // void csyslog(int p, const char *m) {
 //     syslog(p, "%s", m);
 // }
+// #endif
 import "C"
 
 const (
@@ -84,7 +97,7 @@ var (
 	logTee chan string
 )
 
-// When called, this will switch over to writting log messages to the defined socket.
+// SetCustomSocket will switch over to writing log messages to the defined socket.
 func SetCustomSocket(address, network string) (err error) {
 	customSock, err = net.Dial(network, address)
 
@@ -103,7 +116,7 @@ func SetTee(tee chan string) {
 	logTee = tee
 }
 
-// SetLogName sets the indentifier used by syslog for this program
+// SetLogName sets the identifier used by syslog for this program
 func SetLogName(p string) (err error) {
 
 	logNameString = p
@@ -178,23 +191,27 @@ func queueMsg(lvl Level, prefix, format string, v ...interface{}) (err error) {
 	}
 	if _, err = msg.Write(levelMapFmt[lvl]); err != nil {
 		atomic.AddUint64(&errCount, 1)
-		freeMsg(msg)
+		_ = freeMsg(msg) // ignore error
 		return
 	}
 	if _, err = fmt.Fprintf(msg, "%s", prefix); err != nil {
 		atomic.AddUint64(&errCount, 1)
-		freeMsg(msg)
+		_ = freeMsg(msg) // ignore error
 		return
 	}
-	fmt.Fprintf(msg, "<%s: %d> ", file, line)
+	if _, err = fmt.Fprintf(msg, "<%s: %d> ", file, line); err != nil {
+		atomic.AddUint64(&errCount, 1)
+		_ = freeMsg(msg) // ignore error
+		return
+	}
 	if _, err = fmt.Fprintf(msg, format, v...); err != nil {
 		atomic.AddUint64(&errCount, 1)
-		freeMsg(msg)
+		_ = freeMsg(msg) // ignore error
 		return
 	}
 	if err = msg.WriteByte(0); err != nil {
 		atomic.AddUint64(&errCount, 1)
-		freeMsg(msg)
+		_ = freeMsg(msg) // ignore error
 		return
 	}
 
@@ -233,7 +250,7 @@ func printStd(msg *logMessage) (err error) {
 	return
 }
 
-// write a message to syslog. This is a concrete, blocking event.
+// write function writes a message to syslog. This is a concrete, blocking event.
 func write(msg *logMessage) (err error) {
 	start := (*C.char)(unsafe.Pointer(&msg.Bytes()[0]))
 	if _, err = C.csyslog(C.LOG_USER|msg.level, start); err != nil {
@@ -242,8 +259,8 @@ func write(msg *logMessage) (err error) {
 	return
 }
 
-// write a message to a pre-defined custom socket. This is a concrete, blocking event.
-// Writes out using the syslog rfc5424 format.
+// writeCustomSocket writes a message to a pre-defined custom socket.
+// This is a concrete, blocking event. Writes out using the syslog rfc5424 format.
 func writeCustomSocket(msg *logMessage) (err error) {
 	if _, err = customSock.Write(bytes.Join([][]byte{[]byte(fmt.Sprintf("<%d>", C.LOG_USER|msg.level)),
 		msg.Bytes()}, []byte(""))); err != nil {
