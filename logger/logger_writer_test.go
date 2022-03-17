@@ -1,10 +1,12 @@
 package logger
 
 import (
+	"bytes"
 	"fmt"
 	"io"
 	"math/rand"
 	"runtime"
+	"strings"
 	"testing"
 	"time"
 )
@@ -53,6 +55,69 @@ func TestReleaseMemory(t *testing.T) {
 		t.Fatalf("heapAfterLongLogs %d greater than 100MB!", heapAfterLongLogs)
 	} else {
 		fmt.Printf("heapAfterShortLogs: %d\nheapAfterLongLogs:  %d\nSeems acceptable!\n", heapAfterShortLogs, heapAfterLongLogs)
+	}
+}
+
+func TestSetTee(t *testing.T) {
+	SetStdOut()
+	prefix := "[TestSetTee]"
+	message := fmt.Sprintf("log with random string: %s", randString(64))
+
+	teeCh := make(chan string, 5)
+	done := make(chan bool)
+	go func() {
+		for teed := range teeCh {
+			if !strings.Contains(teed, message) {
+				t.Error("expected #{message} but got #{teed}")
+			}
+			done <- true
+		}
+	}()
+	SetTee(teeCh)
+	log := New(Levels.Debug)
+	log.Infof(prefix, message)
+
+	_ = <-done
+	Drain()
+	close(done)
+	close(teeCh)
+	logTee = nil
+}
+
+func TestLogNoTee(t *testing.T) {
+	SetStdOut()
+	prefix := "[TestLogNoTee]"
+	teedMsg := fmt.Sprintf("teed: %s", randString(64))
+	unTeedMsg := fmt.Sprintf("unteed: %s", randString(64))
+
+	teeCh := make(chan string, 5)
+	done := make(chan bool)
+	teeBuf := bytes.Buffer{}
+	go func() {
+		for teed := range teeCh {
+			teeBuf.WriteString(teed)
+			done <- true
+		}
+	}()
+	SetTee(teeCh)
+
+	LogNoTee(Levels.Error, prefix, unTeedMsg)
+	log := New(Levels.Debug)
+	log.Infof(prefix, teedMsg)
+
+	<-done
+	Drain()
+	close(done)
+	close(teeCh)
+	logTee = nil
+
+	// ensure only teed messages was teed
+	teeLogs := teeBuf.String()
+	if !strings.Contains(teeLogs, teedMsg) {
+		t.Error("teed message not in teed logs")
+	}
+	if strings.Contains(teeLogs, unTeedMsg) {
+		t.Error("un-teed message found in teed logs")
 	}
 }
 
