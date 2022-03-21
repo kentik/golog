@@ -217,6 +217,11 @@ func queueMsg(le *logEntry) (err error) {
 		return
 	}
 
+	// tee the message before 'logWriter' calls 'freeMsg'
+	if logTee != nil && le.tee {
+		printTee(msg)
+	}
+
 	// queue the message
 	select {
 	case messages <- msg:
@@ -227,9 +232,6 @@ func queueMsg(le *logEntry) (err error) {
 		return ErrLogFullBuf
 	}
 
-	if logTee != nil && le.tee {
-		printTee(msg)
-	}
 	return
 }
 
