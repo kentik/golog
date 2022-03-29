@@ -8,7 +8,6 @@ import (
 	"io"
 	"net"
 	"os"
-	"runtime"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -20,10 +19,23 @@ import (
 // same signature as printf.
 
 // #include <stdlib.h>
+// #ifdef _WIN32               /* for Windows builds, syslog functions do NOTHING */
+// void csyslog(int p, const char *m) {}
+// void openlog(const char *m, int i, int l) {}
+// #define	LOG_ERR		3      /* error conditions */
+// #define	LOG_WARNING	4      /* warning conditions */
+// #define	LOG_INFO	6      /* informational */
+// #define	LOG_DEBUG	7      /* debug-level messages */
+// #define	LOG_PID		0x01   /* log the pid with each message */
+// #define	LOG_NDELAY	0x08   /* don't delay open */
+// #define	LOG_NOWAIT	0x10   /* don't wait for console forks: DEPRECATED */
+// #define	LOG_USER	(1<<3) /* random user-level messages */
+// #else
 // #include <syslog.h>
 // void csyslog(int p, const char *m) {
 //     syslog(p, "%s", m);
 // }
+// #endif
 import "C"
 
 const (
@@ -31,11 +43,27 @@ const (
 	STDOUT_FORMAT = "2006-01-02T15:04:05.000 "
 )
 
-// container for a pending log message
+// logMessage contains a pending log message
 type logMessage struct {
 	bytes.Buffer
 	level C.int
 	time  time.Time
+}
+
+// logCaller stores where the logger public log method was called
+type logCaller struct {
+	file string
+	line int
+}
+
+// logEntry encapsulates all parameters to queueMsg
+type logEntry struct {
+	lvl  Level
+	pre  string
+	fmt  string
+	fmtV []interface{}
+	lc   logCaller
+	tee  bool
 }
 
 var (
@@ -84,7 +112,7 @@ var (
 	logTee chan string
 )
 
-// When called, this will switch over to writting log messages to the defined socket.
+// SetCustomSocket will switch over to writing log messages to the defined socket.
 func SetCustomSocket(address, network string) (err error) {
 	customSock, err = net.Dial(network, address)
 
@@ -103,7 +131,7 @@ func SetTee(tee chan string) {
 	logTee = tee
 }
 
-// SetLogName sets the indentifier used by syslog for this program
+// SetLogName sets the identifier used by syslog for this program
 func SetLogName(p string) (err error) {
 
 	logNameString = p
@@ -144,9 +172,8 @@ func freeMsg(msg *logMessage) (err error) {
 
 // queueMsg adds a message to the pending messages channel. It will drop the
 // message and return an error if the channel is full.
-func queueMsg(lvl Level, prefix, format string, v ...interface{}) (err error) {
+func queueMsg(le *logEntry) (err error) {
 	atomic.AddUint64(&logCount, 1)
-
 	var msg *logMessage
 
 	// get a message if possible
@@ -160,42 +187,39 @@ func queueMsg(lvl Level, prefix, format string, v ...interface{}) (err error) {
 
 	msg.time = time.Now()
 
+	onErr := func() {
+		atomic.AddUint64(&errCount, 1)
+		_ = freeMsg(msg) // ignore error
+	}
+
+	lvl, prefix, format, v := le.lvl, le.pre, le.fmt, le.fmtV
 	// render the message: level prefix, message body, C null terminator
 	msg.level = levelSysLog[lvl]
-	_, file, line, _ := runtime.Caller(4)
-	for _, s := range []string{
-		// Most to least specific
-		"vendor/github.com/kentik/",
-		"vendor/github.com/",
-		"vendor/",
-		"build/input/",
-	} {
-		idx := strings.Index(file, s)
-		if idx >= 0 {
-			file = file[idx+len(s):]
-			break
-		}
-	}
+	file, line := le.lc.file, le.lc.line
 	if _, err = msg.Write(levelMapFmt[lvl]); err != nil {
-		atomic.AddUint64(&errCount, 1)
-		freeMsg(msg)
+		onErr()
 		return
 	}
 	if _, err = fmt.Fprintf(msg, "%s", prefix); err != nil {
-		atomic.AddUint64(&errCount, 1)
-		freeMsg(msg)
+		onErr()
 		return
 	}
-	fmt.Fprintf(msg, "<%s: %d> ", file, line)
+	if _, err = fmt.Fprintf(msg, "<%s: %d> ", file, line); err != nil {
+		onErr()
+		return
+	}
 	if _, err = fmt.Fprintf(msg, format, v...); err != nil {
-		atomic.AddUint64(&errCount, 1)
-		freeMsg(msg)
+		onErr()
 		return
 	}
 	if err = msg.WriteByte(0); err != nil {
-		atomic.AddUint64(&errCount, 1)
-		freeMsg(msg)
+		onErr()
 		return
+	}
+
+	// tee the message before 'logWriter' calls 'freeMsg'
+	if logTee != nil && le.tee {
+		printTee(msg)
 	}
 
 	// queue the message
@@ -212,19 +236,19 @@ func queueMsg(lvl Level, prefix, format string, v ...interface{}) (err error) {
 }
 
 // Send to a tee
-func printTee(msg *logMessage) (err error) {
+func printTee(msg *logMessage) {
 	// remove C null-termination byte
 	message := string(msg.Bytes()[:msg.Len()-1])
 	message = strings.TrimRight(message, "\n")
 	select {
 	case logTee <- fmt.Sprintf("%s%s%s", msg.time.Format(STDOUT_FORMAT), logNameString, message):
 	default:
-		err = fmt.Errorf("Log Tee Full")
+		LogNoTee(Levels.Error, "[meta log]", "%s log tee is full", logTee)
 	}
 	return
 }
 
-// Just print mesg to stdout
+// printStd prints msg to stdhdl
 func printStd(msg *logMessage) (err error) {
 	// remove C null-termination byte
 	message := string(msg.Bytes()[:msg.Len()-1])
@@ -233,7 +257,7 @@ func printStd(msg *logMessage) (err error) {
 	return
 }
 
-// write a message to syslog. This is a concrete, blocking event.
+// write function writes a message to syslog. This is a concrete, blocking event.
 func write(msg *logMessage) (err error) {
 	start := (*C.char)(unsafe.Pointer(&msg.Bytes()[0]))
 	if _, err = C.csyslog(C.LOG_USER|msg.level, start); err != nil {
@@ -242,8 +266,8 @@ func write(msg *logMessage) (err error) {
 	return
 }
 
-// write a message to a pre-defined custom socket. This is a concrete, blocking event.
-// Writes out using the syslog rfc5424 format.
+// writeCustomSocket writes a message to a pre-defined custom socket.
+// This is a concrete, blocking event. Writes out using the syslog rfc5424 format.
 func writeCustomSocket(msg *logMessage) (err error) {
 	if _, err = customSock.Write(bytes.Join([][]byte{[]byte(fmt.Sprintf("<%d>", C.LOG_USER|msg.level)),
 		msg.Bytes()}, []byte(""))); err != nil {
@@ -256,10 +280,6 @@ func writeCustomSocket(msg *logMessage) (err error) {
 // within the syslog call.
 func logWriter() {
 	for msg := range messages {
-		if logTee != nil {
-			printTee(msg)
-		}
-
 		if stdhdl != nil {
 			printStd(msg)
 		} else if customSock == nil {
