@@ -311,12 +311,20 @@ func Close(ctx context.Context) error {
 // Pending messages may never run out if another goroutine is constantly
 // writing.
 func DrainContext(ctx context.Context) error {
-	for ctx.Err() == nil && len(messages) > 0 {
+	for ctx.Err() == nil && (len(messages) > 0 || len(freeMessages) < cap(freeMessages)) {
 		innerCtx, cancel := context.WithTimeout(ctx, 10*time.Millisecond)
-		<-innerCtx.Done() // Wait for 10ms and check len(messages) again
+		<-innerCtx.Done() // Wait for 10ms and check the queues again
 		cancel()
 	}
 	return ctx.Err()
+}
+
+// DrainWithTimeout is a helper function that uses the given timeout with
+// DrainContext.
+func DrainWithTimeout(d time.Duration) {
+	ctx, cancel := context.WithTimeout(context.Background(), d)
+	_ = DrainContext(ctx)
+	cancel()
 }
 
 // Drain is like DrainContext, but you didn't want to write context.Background().
