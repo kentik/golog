@@ -3,6 +3,7 @@ package logger
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -48,12 +49,13 @@ type logMessage struct {
 	bytes.Buffer
 	level C.int
 	time  time.Time
+	le    logEntry
 }
 
 // logCaller stores where the logger public log method was called
 type logCaller struct {
-	file string
-	line int
+	File string `json:"file"`
+	Line int    `json:"line"`
 }
 
 // logEntry encapsulates all parameters to queueMsg
@@ -64,6 +66,26 @@ type logEntry struct {
 	fmtV []interface{}
 	lc   logCaller
 	tee  bool
+}
+
+type logEntryStructured struct {
+	Time    time.Time `json:"time"`
+	Level   string    `json:"level"`
+	Prefix  string    `json:"prefix"`
+	Message string    `json:"msg"`
+	Caller  logCaller `json:"caller"`
+}
+
+func (msg *logMessage) asJSON() ([]byte, error) {
+	le := msg.le
+	les := logEntryStructured{
+		Time:    msg.time,
+		Level:   le.lvl.String(),
+		Prefix:  le.pre,
+		Message: fmt.Sprintf(le.fmt, le.fmtV...),
+		Caller:  le.lc,
+	}
+	return json.Marshal(les)
 }
 
 var (
@@ -102,6 +124,8 @@ var (
 		Levels.Info:   []byte("[Info] "),
 		Levels.Debug:  []byte("[Debug] "),
 	}
+
+	serFmt = os.Getenv("KENTIK_LOG_FMT")
 
 	customSock net.Conn = nil
 
@@ -192,10 +216,11 @@ func queueMsg(le *logEntry) (err error) {
 		_ = freeMsg(msg) // ignore error
 	}
 
+	msg.le = *le
 	lvl, prefix, format, v := le.lvl, le.pre, le.fmt, le.fmtV
 	// render the message: level prefix, message body, C null terminator
 	msg.level = levelSysLog[lvl]
-	file, line := le.lc.file, le.lc.line
+	file, line := le.lc.File, le.lc.Line
 	if _, err = msg.Write(levelMapFmt[lvl]); err != nil {
 		onErr()
 		return
@@ -250,6 +275,13 @@ func printTee(msg *logMessage) {
 
 // printStd prints msg to stdhdl
 func printStd(msg *logMessage) (err error) {
+	if serFmt == "json" {
+		js, err := msg.asJSON()
+		if err == nil {
+			fmt.Fprintf(stdhdl, "%s\n", js)
+		}
+		return err
+	}
 	// remove C null-termination byte
 	message := string(msg.Bytes()[:msg.Len()-1])
 	message = strings.TrimRight(message, "\n")
