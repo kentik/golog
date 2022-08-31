@@ -54,8 +54,12 @@ type logMessage struct {
 
 // logCaller stores where the logger public log method was called
 type logCaller struct {
-	File string `json:"file"`
-	Line int    `json:"line"`
+	File string
+	Line int
+}
+
+func (lc logCaller) String() string {
+	return fmt.Sprintf("%s:%d", lc.File, lc.Line)
 }
 
 // logEntry encapsulates all parameters to queueMsg
@@ -72,18 +76,18 @@ type logEntryStructured struct {
 	Time    time.Time `json:"time"`
 	Level   string    `json:"level"`
 	Prefix  string    `json:"prefix"`
-	Message string    `json:"msg"`
-	Caller  logCaller `json:"caller"`
+	Message string    `json:"message"`
+	Caller  string    `json:"caller"`
 }
 
 func (msg *logMessage) asJSON() ([]byte, error) {
 	le := msg.le
 	les := logEntryStructured{
 		Time:    msg.time,
-		Level:   le.lvl.String(),
-		Prefix:  le.pre,
+		Level:   strings.ToLower(le.lvl.String()),
+		Prefix:  strings.Trim(le.pre, " "),
 		Message: fmt.Sprintf(le.fmt, le.fmtV...),
-		Caller:  le.lc,
+		Caller:  le.lc.String(),
 	}
 	return json.Marshal(les)
 }
