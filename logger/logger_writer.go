@@ -49,7 +49,7 @@ type logMessage struct {
 	bytes.Buffer
 	level C.int
 	time  time.Time
-	le    logEntry
+	le    *logEntry
 }
 
 // logCaller stores where the logger public log method was called
@@ -80,17 +80,8 @@ type logEntryStructured struct {
 	Caller  string    `json:"caller"`
 }
 
-func (msg *logMessage) asJSON() ([]byte, error) {
-	le := msg.le
-	les := logEntryStructured{
-		Time:    msg.time,
-		Level:   strings.ToLower(le.lvl.String()),
-		Prefix:  strings.Trim(le.pre, " "),
-		Message: fmt.Sprintf(le.fmt, le.fmtV...),
-		Caller:  le.lc.String(),
-	}
-	return json.Marshal(les)
-}
+type logFormatterFn func(lm *logMessage, addLeader bool) error
+type logWriterFn func(lm *logMessage) error
 
 var (
 	ErrLogFullBuf           = errors.New("Log message queue is full")
@@ -129,8 +120,6 @@ var (
 		Levels.Debug:  []byte("[Debug] "),
 	}
 
-	serFmt = os.Getenv("KENTIK_LOG_FMT")
-
 	customSock net.Conn = nil
 
 	logWriterFinished chan struct{}
@@ -138,6 +127,9 @@ var (
 	stdhdl io.Writer
 
 	logTee chan string
+
+	format logFormatterFn = asString
+	write  logWriterFn    = writeSyslog
 )
 
 // SetCustomSocket will switch over to writing log messages to the defined socket.
@@ -213,42 +205,11 @@ func queueMsg(le *logEntry) (err error) {
 		return
 	}
 
-	msg.time = time.Now()
-
-	onErr := func() {
+	// render/format the message
+	if err = render(msg, le); err != nil {
 		atomic.AddUint64(&errCount, 1)
 		_ = freeMsg(msg) // ignore error
-	}
-
-	msg.le = *le
-	lvl, prefix, format, v := le.lvl, le.pre, le.fmt, le.fmtV
-	// render the message: level prefix, message body, C null terminator
-	msg.level = levelSysLog[lvl]
-	file, line := le.lc.File, le.lc.Line
-	if _, err = msg.Write(levelMapFmt[lvl]); err != nil {
-		onErr()
 		return
-	}
-	if _, err = fmt.Fprintf(msg, "%s", prefix); err != nil {
-		onErr()
-		return
-	}
-	if _, err = fmt.Fprintf(msg, "<%s: %d> ", file, line); err != nil {
-		onErr()
-		return
-	}
-	if _, err = fmt.Fprintf(msg, format, v...); err != nil {
-		onErr()
-		return
-	}
-	if err = msg.WriteByte(0); err != nil {
-		onErr()
-		return
-	}
-
-	// tee the message before 'logWriter' calls 'freeMsg'
-	if logTee != nil && le.tee {
-		printTee(msg)
 	}
 
 	// queue the message
@@ -264,64 +225,68 @@ func queueMsg(le *logEntry) (err error) {
 	return
 }
 
-// Send to a tee
-func printTee(msg *logMessage) {
-	// remove C null-termination byte
-	message := string(msg.Bytes()[:msg.Len()-1])
-	message = strings.TrimRight(message, "\n")
+// writeTee writes a message to logTee
+func writeTee(msg *logMessage) error {
 	select {
-	case logTee <- fmt.Sprintf("%s%s%s", msg.time.Format(STDOUT_FORMAT), logNameString, message):
+	case logTee <- string(msg.Bytes()):
 	default:
-		LogNoTee(Levels.Error, "[meta log]", "%s log tee is full", logTee)
+		return fmt.Errorf("%v log tee is full", logTee)
 	}
+	return nil
+}
+
+// writeStd writes a message to stdhdl
+func writeStd(msg *logMessage) (err error) {
+	if err = msg.WriteByte('\n'); err != nil {
+		return
+	}
+	_, err = stdhdl.Write(msg.Bytes())
 	return
 }
 
-// printStd prints msg to stdhdl
-func printStd(msg *logMessage) (err error) {
-	if serFmt == "json" {
-		js, err := msg.asJSON()
-		if err == nil {
-			fmt.Fprintf(stdhdl, "%s\n", js)
-		}
-		return err
+// writeSyslog writes a message to syslog. This is a concrete, blocking event.
+func writeSyslog(msg *logMessage) (err error) {
+	if err = msg.WriteByte(0); err != nil {
+		return
 	}
-	// remove C null-termination byte
-	message := string(msg.Bytes()[:msg.Len()-1])
-	message = strings.TrimRight(message, "\n")
-	fmt.Fprintf(stdhdl, "%s%s%s\n", msg.time.Format(STDOUT_FORMAT), logNameString, message)
-	return
-}
-
-// write function writes a message to syslog. This is a concrete, blocking event.
-func write(msg *logMessage) (err error) {
 	start := (*C.char)(unsafe.Pointer(&msg.Bytes()[0]))
-	if _, err = C.csyslog(C.LOG_USER|msg.level, start); err != nil {
-		atomic.AddUint64(&errCount, 1)
-	}
+	_, err = C.csyslog(C.LOG_USER|msg.level, start)
 	return
 }
 
 // writeCustomSocket writes a message to a pre-defined custom socket.
 // This is a concrete, blocking event. Writes out using the syslog rfc5424 format.
 func writeCustomSocket(msg *logMessage) (err error) {
-	if _, err = customSock.Write(bytes.Join([][]byte{[]byte(fmt.Sprintf("<%d>", C.LOG_USER|msg.level)),
-		msg.Bytes()}, []byte(""))); err != nil {
-		atomic.AddUint64(&errCount, 1)
+	if err = msg.WriteByte(0); err != nil {
+		return
 	}
+	_, err = customSock.Write(bytes.Join([][]byte{[]byte(fmt.Sprintf("<%d>", C.LOG_USER|msg.level)),
+		msg.Bytes()}, []byte("")))
 	return
 }
 
-// logWriter will write out messages to syslog. It may block if something breaks
-// within the syslog call.
+// logWriter reads the messages channel and calls specific `write*` method.
 func logWriter() {
 	for msg := range messages {
+		// tee the message
+		if logTee != nil && msg.le.tee {
+			if err := writeTee(msg); err != nil {
+				LogNoTee(Levels.Warn, "[meta log]", "log tee write failure: %w", err)
+				atomic.AddUint64(&errCount, 1)
+				// do NOT return here -- proceed write the message
+			}
+		}
+
+		var write func(message *logMessage) error
 		if stdhdl != nil {
-			printStd(msg)
+			write = writeStd
 		} else if customSock == nil {
-			write(msg)
+			write = writeSyslog
 		} else {
-			writeCustomSocket(msg)
+			write = writeCustomSocket
+		}
+		if err := write(msg); err != nil {
+			atomic.AddUint64(&errCount, 1)
 		}
 		freeMsg(msg)
 	}
@@ -380,10 +345,80 @@ func setup() {
 		}
 	}
 
+	setFormat()
+
 	logWriterFinished = make(chan struct{}, 1)
 	go logWriter()
 }
 
 func init() {
 	setup()
+}
+
+func setFormat() {
+	format = asString
+	serFmt := os.Getenv("KENTIK_LOG_FMT")
+	if serFmt == "json" {
+		format = asJSON
+	}
+}
+
+func render(msg *logMessage, le *logEntry) (err error) {
+	msg.time = time.Now()
+	msg.level = levelSysLog[le.lvl]
+	msg.le = le
+
+	err = format(msg, stdhdl != nil)
+
+	trimNewLines(msg)
+
+	// do not null-terminate here - let the specific `write*` methods
+	// do so as needed
+	return
+}
+
+func asJSON(msg *logMessage, _ bool) error {
+	le := msg.le
+	les := logEntryStructured{
+		Time:    msg.time,
+		Level:   strings.ToLower(le.lvl.String()),
+		Prefix:  strings.Trim(le.pre, " "),
+		Message: fmt.Sprintf(le.fmt, le.fmtV...),
+		Caller:  le.lc.String(),
+	}
+	return json.NewEncoder(msg).Encode(les)
+}
+
+func asString(lm *logMessage, addLeader bool) (err error) {
+	if addLeader {
+		if _, err = fmt.Fprintf(lm, "%s%s", lm.time.Format(STDOUT_FORMAT), logNameString); err != nil {
+			return
+		}
+	}
+	if _, err = lm.Write(levelMapFmt[lm.le.lvl]); err != nil {
+		return
+	}
+	if _, err = fmt.Fprintf(lm, "%s<%s: %d> ", lm.le.pre, lm.le.lc.File, lm.le.lc.Line); err != nil {
+		return
+	}
+	if _, err = fmt.Fprintf(lm, lm.le.fmt, lm.le.fmtV...); err != nil {
+		return
+	}
+
+	return
+}
+
+// trimNewLines trims off any/all '\n' from the end logMessage's buffer
+func trimNewLines(lm *logMessage) {
+	bs := lm.Bytes()
+	l := len(bs)
+	li := l - 1 // last index of bs
+	cnt := 0
+	for ; cnt < l && bs[li-cnt] == '\n'; cnt++ {
+	}
+	lm.Truncate(l - cnt)
+}
+
+func nullTerminate(b *bytes.Buffer) (err error) {
+	return b.WriteByte(0)
 }

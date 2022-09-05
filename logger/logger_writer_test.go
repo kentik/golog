@@ -7,6 +7,7 @@ import (
 	"math/rand"
 	"runtime"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -59,66 +60,59 @@ func TestReleaseMemory(t *testing.T) {
 }
 
 func TestSetTee(t *testing.T) {
-	SetStdOut()
+	defer cleanUpAndReset()
 	prefix := "[TestSetTee]"
 	message := fmt.Sprintf("log with random string: %s", randString(64))
 
 	teeCh := make(chan string, 5)
-	done := make(chan bool)
+	defer close(teeCh)
+	wg := new(sync.WaitGroup)
 	go func() {
 		for teed := range teeCh {
 			if !strings.Contains(teed, message) {
 				t.Error("expected #{message} but got #{teed}")
 			}
-			done <- true
+			wg.Done()
 		}
 	}()
 	SetTee(teeCh)
 	log := New(Levels.Debug)
+	wg.Add(1)
 	log.Infof(prefix, message)
 
-	_ = <-done
-	Drain()
-	close(done)
-	close(teeCh)
-	logTee = nil
+	wg.Wait()
 }
 
 func TestLogNoTee(t *testing.T) {
-	SetStdOut()
+	defer cleanUpAndReset()
 	prefix := "[TestLogNoTee]"
 	teedMsg := fmt.Sprintf("teed: %s", randString(64))
 	unTeedMsg := fmt.Sprintf("unteed: %s", randString(64))
 
 	teeCh := make(chan string, 5)
-	done := make(chan bool)
-	teeBuf := bytes.Buffer{}
+	defer close(teeCh)
+
+	wg := new(sync.WaitGroup)
 	go func() {
 		for teed := range teeCh {
-			teeBuf.WriteString(teed)
-			done <- true
+			// ensure only teed messages was teed
+			if !strings.Contains(teed, teedMsg) {
+				t.Error("teed message not in teed logs")
+			}
+			if strings.Contains(teed, unTeedMsg) {
+				t.Error("un-teed message found in teed logs")
+			}
+			wg.Done()
 		}
 	}()
 	SetTee(teeCh)
 
 	LogNoTee(Levels.Error, prefix, unTeedMsg)
 	log := New(Levels.Debug)
+	wg.Add(1)
 	log.Infof(prefix, teedMsg)
 
-	<-done
-	Drain()
-	close(done)
-	close(teeCh)
-	logTee = nil
-
-	// ensure only teed messages was teed
-	teeLogs := teeBuf.String()
-	if !strings.Contains(teeLogs, teedMsg) {
-		t.Error("teed message not in teed logs")
-	}
-	if strings.Contains(teeLogs, unTeedMsg) {
-		t.Error("un-teed message found in teed logs")
-	}
+	wg.Wait()
 }
 
 var letters = []rune("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ")
@@ -129,4 +123,79 @@ func randString(n int) string {
 		b[i] = letters[rand.Intn(len(letters))]
 	}
 	return string(b)
+}
+
+func TestSomething(t *testing.T) {
+	defer cleanUpAndReset()
+
+	/*
+		le := &logEntry{
+			lvl:  Levels.Info,
+			pre:  randString(3),
+			fmt:  "rain is %s, seven is %d",
+			fmtV: []interface{}{"wet", 7},
+			lc: logCaller{
+				File: "",
+				Line: 0,
+			},
+			tee: false,
+		}
+
+		msg := &logMessage{
+			Buffer: bytes.Buffer{},
+			level:  nil,
+			time:   time.Time{},
+			le:     logEntry{},
+		}
+	*/
+
+}
+
+func cleanUpAndReset() {
+	Drain()
+	stdhdl = nil
+	logTee = nil
+}
+
+func Test_truncate(t *testing.T) {
+	var b bytes.Buffer
+	fmt.Fprint(&b, "foobar")
+	b.Truncate(0)
+	t.Log(b.Len(), b)
+}
+
+func Test_trimNewLines(t *testing.T) {
+	msg := randString(100)
+	longMsg := randString(1000)
+	tests := []struct {
+		name string
+		msg  string
+	}{
+		{name: "trim 0", msg: msg},
+		{name: "trim 1", msg: msg + "\n"},
+		{name: "trim 3", msg: msg + "\n\n\n"},
+		{name: "with leader trim 0", msg: "\n\n\n" + msg},
+		{name: "with leader trim 1", msg: "\n\n" + msg + "\n"},
+		{name: "with leader trim 2", msg: "\n" + msg + "\n\n"},
+		{name: "empty trim 0", msg: ""},
+		{name: "empty trim 1", msg: "\n"},
+		{name: "empty trim n", msg: "\n\n\n\n\n\n\n\n\n"},
+		{name: "long trim 0", msg: longMsg},
+		{name: "long trim 1", msg: longMsg + "\n"},
+		{name: "long trim 4", msg: longMsg + "\n\n\n\n"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			lm := &logMessage{Buffer: bytes.Buffer{}}
+			if _, err := fmt.Fprint(lm, tt.msg); err != nil {
+				t.Errorf("%q: Fprintf returned %v", tt.name, err)
+			}
+			trimNewLines(lm)
+			trimmed := strings.TrimRight(tt.msg, "\n")
+			message := string(lm.Bytes())
+			if trimmed != message {
+				t.Errorf("%q: %s != %s", tt.name, trimmed, message)
+			}
+		})
+	}
 }
