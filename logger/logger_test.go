@@ -25,6 +25,7 @@ func TestRemoveNewline(t *testing.T) {
 	defer func(origstdhdl io.Writer) { stdhdl = origstdhdl }(stdhdl)
 	buf := bytes.Buffer{}
 	stdhdl = &buf
+	sendJSON = false
 
 	log := New(Levels.Debug)
 
@@ -43,6 +44,7 @@ func TestClose(t *testing.T) {
 	defer func() { setup() }() // Set everything up again since we call Close()
 	buf := bytes.Buffer{}
 	stdhdl = &buf
+	sendJSON = false
 
 	log := New(Levels.Debug)
 	log.Debugf("", "testing123")
