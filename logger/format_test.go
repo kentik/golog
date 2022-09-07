@@ -35,7 +35,6 @@ var (
 func Test_asString(t *testing.T) {
 	stdhdl = io.Writer(os.Stdout)
 	_ = SetLogName(tLogName)
-	// defer reset
 
 	lm := &logMessage{le: le, time: tm}
 
@@ -46,7 +45,7 @@ func Test_asString(t *testing.T) {
 
 	levelStr := string(levelMapFmt[level])
 	caller := fmt.Sprintf("<%s: %d> ", le.lc.File, le.lc.Line)
-	logStr := tTime + tLogName + levelStr + le.pre + caller + msg
+	logStr := tTime + tLogName + levelStr + le.pre + caller + msg + "\n"
 	if logStr != lm.String() {
 		t.Errorf("%s != %s", logStr, lm.String())
 	}
@@ -70,7 +69,7 @@ func Test_asJSON(t *testing.T) {
 		Prefix:  "[CHF]",
 		Message: msg,
 		Caller:  le.lc.String(),
-		LogName: tLogName,
+		Name:    tLogName,
 	}
 	if expected != *actual {
 		t.Errorf("expected:%v != actual:%v", expected, *actual)
@@ -103,7 +102,7 @@ func Test_rightTrimNewLines(t *testing.T) {
 				t.Errorf("%q: Fprintf returned %v", tt.name, err)
 			}
 			lm.rightTrimNewLines()
-			trimmed := strings.TrimRight(tt.msg, "\n")
+			trimmed := strings.TrimRight(tt.msg, "\n") + "\n"
 			message := string(lm.Bytes())
 			if trimmed != message {
 				t.Errorf("%q: %s != %s", tt.name, trimmed, message)

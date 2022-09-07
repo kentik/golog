@@ -221,10 +221,6 @@ func printTee(msg *logMessage) {
 
 // printStd prints msg to stdhdl
 func printStd(msg *logMessage) (err error) {
-	// add new line char
-	if err = msg.WriteByte('\n'); err != nil {
-		return
-	}
 	_, err = io.Copy(stdhdl, msg)
 	return
 }
@@ -232,9 +228,8 @@ func printStd(msg *logMessage) (err error) {
 // write function writes a message to syslog. This is a concrete, blocking event.
 func write(msg *logMessage) (err error) {
 	// terminate C string
-	if err = msg.WriteByte(0); err != nil {
-		return
-	}
+	_ = msg.WriteByte(0) // *Buffer.WriteByte always returns nil
+
 	start := (*C.char)(unsafe.Pointer(&msg.Bytes()[0]))
 	_, err = C.csyslog(C.LOG_USER|msg.level, start)
 	return
@@ -244,9 +239,7 @@ func write(msg *logMessage) (err error) {
 // This is a concrete, blocking event. Writes out using the syslog rfc5424 format.
 func writeCustomSocket(msg *logMessage) (err error) {
 	// terminate C string
-	if err = msg.WriteByte(0); err != nil {
-		return
-	}
+	_ = msg.WriteByte(0) // *Buffer.WriteByte always returns nil
 
 	_, err = customSock.Write(bytes.Join([][]byte{[]byte(fmt.Sprintf("<%d>", C.LOG_USER|msg.level)),
 		msg.Bytes()}, []byte("")))

@@ -10,11 +10,11 @@ import (
 
 type logEntryStructured struct {
 	Time    time.Time `json:"time"`
+	Name    string    `json:"name"`
 	Level   string    `json:"level"`
 	Prefix  string    `json:"prefix"`
-	Message string    `json:"message"`
 	Caller  string    `json:"caller"`
-	LogName string    `json:"logName"`
+	Message string    `json:"message"`
 }
 
 const KentikLogFmt = "KENTIK_LOG_FMT"
@@ -33,11 +33,11 @@ func (lm *logMessage) asJSON() error {
 	le := lm.le
 	les := logEntryStructured{
 		Time:    lm.time,
+		Name:    logNameString,
 		Level:   strings.ToLower(le.lvl.String()),
 		Prefix:  strings.Trim(le.pre, " "),
 		Message: fmt.Sprintf(le.fmt, le.fmtV...),
 		Caller:  le.lc.String(),
-		LogName: logNameString,
 	}
 	return json.NewEncoder(lm).Encode(les)
 }
@@ -71,15 +71,22 @@ func (lm *logMessage) asString() (err error) {
 	return
 }
 
-// rightTrimNewLines trims off any/all '\n' from the end logMessage's buffer
+// rightTrimNewLines ensures one and only one '\n' at the end of logMessage's buffer
 func (lm *logMessage) rightTrimNewLines() {
 	bs := lm.Bytes()
 	l := len(bs)
 	bsEnd := l - 1 // last index of bs
+
+	// count number of new line bytes
 	var cnt int
 	for cnt = 0; cnt < l && bs[bsEnd-cnt] == '\n'; cnt++ {
 	}
-	if cnt > 0 {
-		lm.Truncate(l - cnt)
+
+	switch cnt {
+	case 0:
+		_ = lm.WriteByte('\n') // *Buffer.WriteByte always returns nil
+	case 1: // no-op
+	default:
+		lm.Truncate(l - cnt + 1)
 	}
 }
